@@ -12,9 +12,9 @@ import (
 )
 
 var (
-	from       = flag.String("from", "", "Convert from...")
+	from       = flag.String("from", "-", "Convert from...")
 	fromFormat = flag.String("fromFormat", "", "Format of from file")
-	to         = flag.String("to", "", "Convert to...")
+	to         = flag.String("to", "-", "Convert to...")
 	toFormat   = flag.String("toFormat", "", "Desired format of the output")
 
 	nonStreamableFormats = map[string]bool{
