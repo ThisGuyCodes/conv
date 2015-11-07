@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"encoding/xml"
 	"flag"
 	"io"
 	"io/ioutil"
@@ -20,6 +21,7 @@ var (
 	nonStreamableFormats = map[string]bool{
 		"yaml":        true,
 		"json-pretty": true,
+		"xml-pretty":  true,
 	}
 )
 
@@ -36,6 +38,8 @@ func createDecoder(format string, reader io.Reader) decoder {
 	switch format {
 	case "json":
 		return json.NewDecoder(reader)
+	case "xml":
+		return xml.NewDecoder(reader)
 	default:
 		log.Fatalln("Unknown decoder format:", format)
 	}
@@ -46,6 +50,8 @@ func createEncoder(format string, writer io.Writer) encoder {
 	switch format {
 	case "json":
 		return json.NewEncoder(writer)
+	case "xml":
+		return xml.NewEncoder(writer)
 	default:
 		log.Fatalln("Unknown encoder format:", format)
 	}
@@ -59,6 +65,10 @@ func getMarshaler(format string) func(interface{}) ([]byte, error) {
 	case "json-pretty":
 		return func(v interface{}) ([]byte, error) {
 			return json.MarshalIndent(v, "", "  ")
+		}
+	case "xml-pretty":
+		return func(v interface{}) ([]byte, error) {
+			return xml.MarshalIndent(v, "", "    ")
 		}
 	default:
 		log.Fatalln("Unknown marshaler format:", format)
