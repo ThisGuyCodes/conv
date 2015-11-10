@@ -3,167 +3,117 @@ package main
 import (
 	"encoding/json"
 	"flag"
-	"io"
 	"io/ioutil"
 	"log"
 	"os"
+	"strconv"
 
 	"gopkg.in/yaml.v2"
 )
 
 var (
-	from       = flag.String("from", "-", "Convert from...")
-	fromFormat = flag.String("fromFormat", "", "Format of from file")
-	to         = flag.String("to", "-", "Convert to...")
-	toFormat   = flag.String("toFormat", "", "Desired format of the output")
-
-	nonStreamableFormats = map[string]bool{
-		"yaml":        true,
-		"json-pretty": true,
-	}
+	inputPath  string
+	outputPath string
 )
 
-type decoder interface {
-	Decode(interface{}) error
-	More() bool
+func init() {
+	flag.StringVar(&inputPath, "in", "-", "Path to the input file")
+	flag.StringVar(&outputPath, "out", "-", "Path to the output file")
 }
 
-type encoder interface {
-	Encode(interface{}) error
+type holdType struct {
+	held interface{}
 }
 
-func createDecoder(format string, reader io.Reader) decoder {
-	switch format {
-	case "json":
-		return json.NewDecoder(reader)
-	default:
-		log.Fatalln("Unknown decoder format:", format)
+func (ht *holdType) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var held interface{}
+	err := unmarshal(&held)
+	if err != nil {
+		return err
 	}
-	return nil
-}
 
-func createEncoder(format string, writer io.Writer) encoder {
-	switch format {
-	case "json":
-		return json.NewEncoder(writer)
-	default:
-		log.Fatalln("Unknown encoder format:", format)
-	}
-	return nil
-}
-
-func getMarshaler(format string) func(interface{}) ([]byte, error) {
-	switch format {
-	case "yaml":
-		return yaml.Marshal
-	case "json-pretty":
-		return func(v interface{}) ([]byte, error) {
-			return json.MarshalIndent(v, "", "  ")
+	switch held := held.(type) {
+	case map[interface{}]interface{}:
+		strHeld := make(map[string]interface{}, len(held))
+		for k, v := range held {
+			switch k := k.(type) {
+			case string:
+				strHeld[k] = v
+			case int:
+				strHeld[strconv.Itoa(k)] = v
+			}
 		}
+		ht.held = strHeld
+		return nil
 	default:
-		log.Fatalln("Unknown marshaler format:", format)
+		ht.held = held
+		return nil
 	}
-	return nil
 }
 
-func getUnmarshaler(format string) func([]byte, interface{}) error {
-	switch format {
-	case "yaml":
-		return yaml.Unmarshal
-	default:
-		log.Fatalln("Unknown unmarshaler format:", format)
-	}
-	return nil
+func (ht *holdType) MarshalYAML() (interface{}, error) {
+	return ht.held, nil
+}
+
+func (ht *holdType) MarshalJSON() ([]byte, error) {
+	return json.Marshal(ht.held)
+}
+
+func (ht *holdType) UnmarshalJSON(b []byte) error {
+	return json.Unmarshal(b, &ht.held)
 }
 
 func main() {
+	var err error
 	flag.Parse()
 
-	var err error
-
-	var fromFile *os.File
-	var toFile *os.File
-
-	if *from == "" {
-		log.Fatalln("Please specificy a from file")
-	} else if *from == "-" {
-		fromFile = os.Stdin
+	var inputFile *os.File
+	if inputPath == "-" {
+		inputFile = os.Stdin
 	} else {
-		fromFile, err = os.Open(*from)
+		inputFile, err = os.Open(inputPath)
 		if err != nil {
-			log.Fatalln("Could not open from file:", err)
+			log.Fatalln("Could not open input file:", err)
 		}
 	}
+	defer inputFile.Close()
 
-	if *to == "" {
-		log.Fatalln("Please specify a to file")
-	} else if *from == "-" {
-		toFile = os.Stdout
+	var outputFile *os.File
+	if outputPath == "-" {
+		outputFile = os.Stdout
 	} else {
-		toFile, err = os.Create(*to)
+		outputFile, err = os.Open(outputPath)
 		if err != nil {
-			log.Fatalln("Could not open to file:", err)
+			log.Fatalln("Could not open input file:", err)
 		}
 	}
+	defer outputFile.Close()
 
-	var fromDatas []map[string]interface{}
-
-	if nonStreamableFormats[*fromFormat] {
-		fromUnmarshaler := getUnmarshaler(*fromFormat)
-		fromData, err := ioutil.ReadAll(fromFile)
-		if err != nil {
-			log.Fatalln("Could not read from file:", err)
-		}
-		var fromType map[string]interface{}
-		err = fromUnmarshaler(fromData, &fromType)
-		if err != nil {
-			log.Fatalln("Could not unmarshal from file:", err)
-		}
-		fromDatas = append(fromDatas, fromType)
-	} else {
-		fromDecoder := createDecoder(*fromFormat, fromFile)
-
-		for fromDecoder.More() {
-			var fromType map[string]interface{}
-			err = fromDecoder.Decode(&fromType)
-			if err != nil {
-				log.Fatalln("Could not decode from file:", err)
-			}
-			fromDatas = append(fromDatas, fromType)
-		}
-	}
-
-	if nonStreamableFormats[*toFormat] {
-		toMarshaler := getMarshaler(*toFormat)
-		for _, item := range fromDatas {
-			toData, err := toMarshaler(item)
-			if err != nil {
-				log.Fatalln("Could not marshal data:", err)
-			}
-			for i := 0; i != len(toData) && err == nil; i, err = toFile.Write(toData) {
-				toData = toData[i:]
-			}
-			if err != nil {
-				log.Fatalln("Could not write to file:", err)
-			}
-		}
-	} else {
-		toEncoder := createEncoder(*toFormat, toFile)
-
-		for _, item := range fromDatas {
-			err = toEncoder.Encode(item)
-			if err != nil {
-				log.Fatalln("Could not encode item:", err)
-			}
-		}
-	}
-
-	err = fromFile.Close()
+	inputData, err := ioutil.ReadAll(inputFile)
 	if err != nil {
-		log.Fatalln("Could not close from file:", err)
+		log.Fatalln("Could not read input file:", err)
 	}
-	err = toFile.Close()
+
+	inputInterface := &holdType{}
+	err = yaml.Unmarshal(inputData, &inputInterface)
 	if err != nil {
-		log.Fatalln("Could not close to file:", err)
+		log.Fatalln("Could not unmarshal input data:", err)
+	}
+
+	outputData, err := json.MarshalIndent(inputInterface, "", "  ")
+	if err != nil {
+		log.Fatalln("Could not marshal the output:", err)
+	}
+
+	i, err := outputFile.Write(outputData)
+	if err != nil {
+		log.Fatalln("Could not write to output file:", err)
+	}
+	for i != len(outputData) {
+		outputData = outputData[i:]
+		i, err = outputFile.Write(outputData)
+		if err != nil {
+			log.Fatalln("Could not write to output file:", err)
+		}
 	}
 }
